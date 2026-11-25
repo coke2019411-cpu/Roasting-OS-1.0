@@ -1,0 +1,129 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>로스팅 로거 연결</title>
+<style>
+  :root { --bg:#f2f2f7; --card:#ffffff; --text:#1c1c1e; --sub:rgba(60,60,67,0.6); --line:rgba(60,60,67,0.12);
+          --blue:#007aff; --green:#34c759; --red:#ff3b30; --field:rgba(118,118,128,0.12); }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) { --bg:#000000; --card:#1c1c1e; --text:#f2f2f7; --sub:rgba(235,235,245,0.6);
+          --line:rgba(84,84,88,0.65); --field:rgba(118,118,128,0.24); }
+  }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--text);
+         font-family:-apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", "Malgun Gothic", sans-serif; }
+  main { max-width:420px; margin:0 auto; padding:48px 16px; }
+  .icon { width:64px; height:64px; border-radius:16px; background:#3b2a1e; color:#fff; display:flex;
+          align-items:center; justify-content:center; font-size:30px; font-weight:700; margin:0 auto 18px; }
+  h1 { font-size:22px; text-align:center; margin:0 0 6px; }
+  p.sub { text-align:center; color:var(--sub); font-size:14px; margin:0 0 26px; line-height:1.5; }
+  .card { background:var(--card); border-radius:14px; overflow:hidden; margin-bottom:16px; }
+  .row { padding:13px 16px; font-size:15px; border-top:1px solid var(--line); }
+  .row:first-child { border-top:none; }
+  .row small { display:block; color:var(--sub); font-size:12px; margin-bottom:3px; }
+  input { width:100%; border:none; background:transparent; font-size:16px; color:var(--text); outline:none; padding:2px 0; }
+  button { width:100%; border:none; border-radius:12px; padding:14px; font-size:16px; font-weight:600; cursor:pointer; margin-top:8px; }
+  .primary { background:var(--blue); color:#fff; }
+  .ok { background:var(--green); color:#fff; }
+  .plain { background:var(--field); color:var(--text); }
+  button:disabled { opacity:.5; cursor:default; }
+  .msg { text-align:center; font-size:14px; color:var(--sub); min-height:20px; margin-top:12px; }
+  .err { color:var(--red); }
+  ul { margin:4px 0 0; padding-left:18px; color:var(--sub); font-size:13px; line-height:1.6; }
+  .hide { display:none; }
+</style>
+</head>
+<body>
+<main>
+  <div class="icon">R</div>
+  <h1 id="title">로스팅 로거 연결</h1>
+  <p class="sub" id="lead">로스팅 로거 계정으로 로그인하세요.</p>
+
+  <section id="login" class="hide">
+    <div class="card">
+      <div class="row"><small>이메일</small><input id="email" type="email" autocomplete="username"></div>
+      <div class="row"><small>비밀번호</small><input id="pw" type="password" autocomplete="current-password"></div>
+    </div>
+    <button class="primary" id="btnLogin">로그인</button>
+  </section>
+
+  <section id="consent" class="hide">
+    <div class="card">
+      <div class="row"><small>연결할 앱</small><b id="client">-</b></div>
+      <div class="row"><small>로그인한 계정</small><span id="who">-</span></div>
+      <div class="row"><small>허용하면 할 수 있는 일</small>
+        <ul>
+          <li>이 계정의 로스팅 기록 · 생산 요약 · 생두 재고 조회</li>
+          <li>기록의 배치명 · 프로파일 · 생두 · 메모 · 투입/배출량 수정</li>
+          <li>생두 입고 · 재고 조정</li>
+        </ul>
+      </div>
+    </div>
+    <button class="ok" id="btnAllow">허용</button>
+    <button class="plain" id="btnDeny">거부</button>
+  </section>
+
+  <div class="msg" id="msg"></div>
+</main>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
+<script>
+  // 로스팅 로거와 같은 Supabase 프로젝트 (공개용 publishable 키 - 프로그램에도 들어 있는 값)
+  const SUPABASE_URL = "https://kydeysshibukwhoxuhtq.supabase.co";
+  const SUPABASE_KEY = "sb_publishable_E90Idt-AOrniR9K_bs5k2A_p2Qo48d-";
+  const sb = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+  const $ = (id) => document.getElementById(id);
+  const authId = new URLSearchParams(location.search).get("authorization_id");
+
+  function say(t, isErr) { $("msg").textContent = t || ""; $("msg").className = "msg" + (isErr ? " err" : ""); }
+  function show(id) { for (const s of ["login", "consent"]) $(s).classList.toggle("hide", s !== id); }
+
+  async function start() {
+    if (!authId) {
+      $("lead").innerHTML = "이 화면은 Claude 에서 로스팅 로거 커넥터를 <b>연결</b>할 때 자동으로 열립니다.<br>" +
+        "로스팅 로거 → 설정 → Claude 연결 에서 방법을 확인하세요.";
+      return;
+    }
+    const { data: { session } } = await sb.auth.getSession();
+    if (!session) { show("login"); $("email").focus(); return; }
+    await loadDetails(session);
+  }
+
+  async function loadDetails(session) {
+    say("확인 중…");
+    const { data, error } = await sb.auth.oauth.getAuthorizationDetails(authId);
+    if (error) { say("연결 요청을 확인하지 못했습니다: " + error.message, true); show(null); return; }
+    if (data && !data.authorization_id && data.redirect_url) { location.href = data.redirect_url; return; } // 이미 허용함
+    $("client").textContent = (data && data.client && data.client.name) || "Claude";
+    $("who").textContent = (session.user && session.user.email) || "-";
+    $("lead").textContent = "아래 앱이 로스팅 로거 데이터에 접근하려고 합니다.";
+    say("");
+    show("consent");
+  }
+
+  $("btnLogin").onclick = async () => {
+    $("btnLogin").disabled = true; say("로그인 중…");
+    const { data, error } = await sb.auth.signInWithPassword({ email: $("email").value.trim(), password: $("pw").value });
+    $("btnLogin").disabled = false;
+    if (error) { say("이메일 또는 비밀번호를 확인하세요.", true); return; }
+    $("pw").value = "";
+    await loadDetails(data.session);
+  };
+  $("pw").addEventListener("keydown", (e) => { if (e.key === "Enter") $("btnLogin").click(); });
+
+  async function decide(allow) {
+    $("btnAllow").disabled = $("btnDeny").disabled = true; say(allow ? "허용하는 중…" : "거부하는 중…");
+    const fn = allow ? sb.auth.oauth.approveAuthorization : sb.auth.oauth.denyAuthorization;
+    const { data, error } = await fn.call(sb.auth.oauth, authId);
+    if (error) { say("처리하지 못했습니다: " + error.message, true); $("btnAllow").disabled = $("btnDeny").disabled = false; return; }
+    if (data && data.redirect_url) location.href = data.redirect_url;
+    else say(allow ? "허용했습니다. 이 창을 닫으세요." : "거부했습니다. 이 창을 닫으세요.");
+  }
+  $("btnAllow").onclick = () => decide(true);
+  $("btnDeny").onclick = () => decide(false);
+  start();
+</script>
+</body>
+</html>
